@@ -52,7 +52,16 @@ if st.button("Analizar"):
         stop = ultima["suelo"]
         riesgo = entrada - stop
         objetivo = entrada + riesgo * 2
+mensaje = f"""
+🚀 RUPTURA DARVAS
 
+Activo: {activo}
+Entrada: {round(entrada,2)}
+Stop: {round(stop,2)}
+Objetivo: {round(objetivo,2)}
+"""
+
+enviar_alerta(mensaje)
         st.success("✅ Hay ruptura Darvas detectada")
 
         col1, col2, col3, col4 = st.columns(4)
