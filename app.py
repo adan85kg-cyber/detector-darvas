@@ -4,30 +4,67 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import requests
 
-BOT_TOKEN = "TU_TOKEN"
-CHAT_ID = "TU_CHAT_ID"
+# ===============================
+# CONFIGURACION TELEGRAM
+# ===============================
+
+BOT_TOKEN = "PON_AQUI_TU_TOKEN"
+CHAT_ID = "68807076"
+
 
 def enviar_alerta(mensaje):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
     payload = {
         "chat_id": CHAT_ID,
         "text": mensaje
     }
-    requests.post(url, data=payload)
+
+    respuesta = requests.post(url, data=payload)
+
+    if respuesta.status_code == 200:
+        return True, "Mensaje enviado"
+    else:
+        return False, respuesta.text
+
+
+# ===============================
+# INTERFAZ
+# ===============================
 
 st.set_page_config(page_title="Detector Darvas")
 
 st.title("📈 Detector de Cajas Darvas")
 
+
+# ===============================
+# BOTON TEST TELEGRAM
+# ===============================
+
 if st.button("Probar alerta Telegram"):
-    enviar_alerta("✅ Prueba de alerta Darvas funcionando")
-    st.success("Mensaje enviado")
-    
+
+    ok, respuesta = enviar_alerta("✅ Prueba de alerta Darvas funcionando")
+
+    if ok:
+        st.success("Mensaje enviado a Telegram")
+    else:
+        st.error(f"Error Telegram: {respuesta}")
+
+
+# ===============================
+# PARAMETROS
+# ===============================
+
 activo = st.text_input("Escribe el activo", "AAPL")
 
 dias_caja = st.slider("Días para la caja", 10, 60, 20)
 
 factor_volumen = st.slider("Volumen mínimo x media", 1.0, 3.0, 1.5)
+
+
+# ===============================
+# ANALISIS DARVAS
+# ===============================
 
 if st.button("Analizar"):
 
@@ -51,6 +88,11 @@ if st.button("Analizar"):
 
     st.subheader(f"Resultado para {activo}")
 
+
+# ===============================
+# SI HAY RUPTURA
+# ===============================
+
     if len(senales) > 0:
 
         ultima = senales.iloc[-1]
@@ -62,9 +104,12 @@ if st.button("Analizar"):
 
         mensaje = f"🚀 RUPTURA DARVAS\n\nActivo: {activo}\nEntrada: {round(entrada,2)}\nStop: {round(stop,2)}\nObjetivo: {round(objetivo,2)}"
 
-        enviar_alerta(mensaje)
+        ok, respuesta = enviar_alerta(mensaje)
 
-        st.success("✅ Hay ruptura Darvas detectada")
+        if ok:
+            st.success("✅ Hay ruptura Darvas detectada (alerta enviada)")
+        else:
+            st.error(f"Error Telegram: {respuesta}")
 
         col1, col2, col3, col4 = st.columns(4)
 
@@ -75,9 +120,19 @@ if st.button("Analizar"):
 
         st.dataframe(senales.tail(10))
 
+
+# ===============================
+# SI NO HAY RUPTURA
+# ===============================
+
     else:
 
         st.warning("❌ No hay ruptura Darvas fuerte")
+
+
+# ===============================
+# GRAFICO
+# ===============================
 
     fig, ax = plt.subplots(figsize=(14,6))
 
