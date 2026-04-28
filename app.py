@@ -52,7 +52,8 @@ if st.button("Analizar"):
         stop = ultima["suelo"]
         riesgo = entrada - stop
         objetivo = entrada + riesgo * 2
-mensaje = f"""
+        
+        mensaje = f"""
 🚀 RUPTURA DARVAS
 
 Activo: {activo}
