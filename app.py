@@ -19,6 +19,10 @@ st.set_page_config(page_title="Detector Darvas")
 
 st.title("📈 Detector de Cajas Darvas")
 
+if st.button("Probar alerta Telegram"):
+    enviar_alerta("✅ Prueba de alerta Darvas funcionando")
+    st.success("Mensaje enviado")
+    
 activo = st.text_input("Escribe el activo", "AAPL")
 
 dias_caja = st.slider("Días para la caja", 10, 60, 20)
