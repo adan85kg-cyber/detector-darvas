@@ -8,7 +8,7 @@ import requests
 # CONFIGURACION TELEGRAM
 # ===============================
 
-BOT_TOKEN = "PON_AQUI_TU_TOKEN"
+BOT_TOKEN = "8608735942:AAEq_8RXuUkSMmDvWSf6gb5RtAwZYUxZ_4k"
 CHAT_ID = "68807076"
 
 
