@@ -63,6 +63,7 @@ Objetivo: {round(objetivo,2)}
 """
 
 enviar_alerta(mensaje)
+
         st.success("✅ Hay ruptura Darvas detectada")
 
         col1, col2, col3, col4 = st.columns(4)
