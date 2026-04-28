@@ -3,7 +3,18 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
+import requests
 
+BOT_TOKEN = "8608735942:AAGpeyYOi0-gW1n4v_rjQGKstj21RmYVbQg"
+CHAT_ID = "68807076"
+
+def enviar_alerta(mensaje):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": mensaje
+    }
+    requests.post(url, data=payload)
 st.set_page_config(page_title="Detector Darvas", layout="wide")
 
 st.title("📈 Detector de Cajas Darvas")
