@@ -8,7 +8,7 @@ import requests
 # TELEGRAM
 # =========================
 BOT_TOKEN = "8608735942:AAEq_8RXuUkSMmDvWSf6gb5RtAwZYUxZ_4k"
-CHAT_ID = 68807076  # sin comillas
+CHAT_ID = 68807076  
 
 
 def enviar_alerta(mensaje):
