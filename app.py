@@ -1,89 +1,83 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd
 import requests
 
 # ---------- CONFIG ----------
 NTFY_TOPIC = "darvas-adan-8519"
 
-# ---------- FUNCION ALERTA ----------
+# ---------- ALERTA NTFY ----------
 def enviar_alerta(mensaje):
-
     url = f"https://ntfy.sh/{NTFY_TOPIC}"
 
-    requests.post(
+    respuesta = requests.post(
         url,
         data=mensaje.encode("utf-8"),
         headers={
             "Title": "Alerta Darvas",
             "Priority": "high"
-        }
+        },
+        timeout=10
     )
 
-# ---------- FUNCION DARVAS ----------
+    return respuesta.status_code
+
+
+# ---------- DARVAS ----------
 def detectar_darvas(df, dias_caja=20):
-
-    maximo = df["High"].rolling(dias_caja).max().iloc[-2]
-
-    cierre_actual = df["Close"].iloc[-1]
+    maximo = float(df["High"].rolling(dias_caja).max().iloc[-2])
+    cierre_actual = float(df["Close"].iloc[-1])
 
     ruptura = cierre_actual > maximo
 
-    return ruptura, maximo
+    return ruptura, maximo, cierre_actual
 
-# ---------- INTERFAZ ----------
-st.set_page_config(page_title="Detector Darvas")
+
+# ---------- APP ----------
+st.set_page_config(page_title="Detector Darvas", page_icon="🚀")
 
 st.title("🚀 Detector Darvas")
 
-ticker = st.text_input("Ticker", "AAPL")
+ticker = st.text_input("Ticker", "AAPL").upper()
 
 dias_caja = st.slider(
     "Dias para la caja",
-    5,
-    50,
-    20
+    min_value=5,
+    max_value=50,
+    value=20
 )
 
-# ---------- BOTON ----------
 if st.button("Analizar"):
 
     try:
-
         df = yf.download(
             ticker,
             period="6mo",
-            interval="1d"
+            interval="1d",
+            auto_adjust=False,
+            progress=False
         )
 
         if df.empty:
-            st.error("No hay datos")
+            st.error("No hay datos para ese ticker")
             st.stop()
 
-        ruptura, entrada = detectar_darvas(
+        ruptura, entrada_darvas, precio_actual = detectar_darvas(
             df,
             dias_caja
         )
 
-        precio_actual = round(
-            df["Close"].iloc[-1],
-            2
-        )
+        precio_actual = round(float(precio_actual), 2)
 
         stop_loss = round(
-            df["Low"].rolling(dias_caja).min().iloc[-1],
+            float(df["Low"].rolling(dias_caja).min().iloc[-1]),
             2
         )
 
-        riesgo = round(
-            precio_actual - stop_loss,
-            2
-        )
+        riesgo = round(precio_actual - stop_loss, 2)
 
         st.subheader(f"Resultado para {ticker}")
 
         if ruptura:
-
             st.success("✅ Hay ruptura Darvas")
 
             mensaje = f"""
@@ -98,18 +92,19 @@ Stop Loss: {stop_loss}
 Riesgo: {riesgo}
 """
 
-            enviar_alerta(mensaje)
+            estado = enviar_alerta(mensaje)
 
-            st.success("📲 Alerta enviada al móvil")
+            if estado == 200:
+                st.success("📲 Alerta enviada al móvil")
+            else:
+                st.error(f"Falló ntfy. Código: {estado}")
 
         else:
-
-            st.warning("❌ No hay ruptura")
+            st.warning("❌ No hay ruptura Darvas")
 
         st.write(f"### Entrada\n{precio_actual}")
         st.write(f"### Stop Loss\n{stop_loss}")
         st.write(f"### Riesgo\n{riesgo}")
 
     except Exception as e:
-
-        st.error(str(e))
+        st.error(f"Error: {e}")
