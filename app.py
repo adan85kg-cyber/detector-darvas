@@ -1,4 +1,21 @@
-import streamlit as st
+import requests
+
+NTFY_TOPIC = "darvas-adan-8519"
+
+def enviar_alerta(mensaje):
+
+    url = f"https://ntfy.sh/{NTFY_TOPIC}"
+
+    respuesta = requests.post(
+        url,
+        data=mensaje.encode("utf-8"),
+        headers={
+            "Title": "Alerta Darvas",
+            "Priority": "high"
+        }
+    )
+
+    return respuesta.status_codeimport streamlit as st
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
