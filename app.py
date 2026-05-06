@@ -1,12 +1,17 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
 import requests
 
+# ---------- CONFIG ----------
 NTFY_TOPIC = "darvas-adan-8519"
 
+# ---------- FUNCION ALERTA ----------
 def enviar_alerta(mensaje):
 
     url = f"https://ntfy.sh/{NTFY_TOPIC}"
 
-    respuesta = requests.post(
+    requests.post(
         url,
         data=mensaje.encode("utf-8"),
         headers={
@@ -15,154 +20,96 @@ def enviar_alerta(mensaje):
         }
     )
 
-    return respuesta.status_codeimport streamlit as st
-import yfinance as yf
-import pandas as pd
-import matplotlib.pyplot as plt
-import requests
+# ---------- FUNCION DARVAS ----------
+def detectar_darvas(df, dias_caja=20):
 
-# =========================
-# TELEGRAM
-# =========================
-BOT_TOKEN = "8608735942:AAEq_8RXuUkSMmDvWSf6gb5RtAwZYUxZ_4k"
-CHAT_ID = 68807076  
+    maximo = df["High"].rolling(dias_caja).max().iloc[-2]
 
+    cierre_actual = df["Close"].iloc[-1]
 
-def enviar_alerta(mensaje):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    ruptura = cierre_actual > maximo
 
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": mensaje
-    }
+    return ruptura, maximo
 
-    try:
-        r = requests.post(url, data=payload, timeout=10)
+# ---------- INTERFAZ ----------
+st.set_page_config(page_title="Detector Darvas")
 
-        if r.status_code == 200:
-            return True, "Mensaje enviado correctamente"
-        else:
-            return False, r.text
+st.title("🚀 Detector Darvas")
 
-    except Exception as e:
-        return False, str(e)
+ticker = st.text_input("Ticker", "AAPL")
 
+dias_caja = st.slider(
+    "Dias para la caja",
+    5,
+    50,
+    20
+)
 
-# =========================
-# APP
-# =========================
-st.set_page_config(page_title="Detector Darvas", layout="wide")
-
-st.title("📈 Detector de Cajas Darvas")
-
-if st.button("Probar alerta Telegram"):
-    ok, respuesta = enviar_alerta("✅ Prueba de alerta Darvas funcionando")
-
-    if ok:
-        st.success("Mensaje enviado a Telegram")
-    else:
-        st.error(f"Error Telegram: {respuesta}")
-
-activo = st.text_input("Escribe el activo", "AAPL")
-
-dias_caja = st.slider("Días para la caja", 10, 60, 20)
-
-factor_volumen = st.slider("Volumen mínimo x media", 1.0, 3.0, 1.5)
-
+# ---------- BOTON ----------
 if st.button("Analizar"):
 
-    with st.spinner("Descargando datos..."):
+    try:
 
-        datos = yf.download(
-            activo,
-            period="1y",
-            interval="1d",
-            progress=False
+        df = yf.download(
+            ticker,
+            period="6mo",
+            interval="1d"
         )
 
-    if datos.empty:
-        st.error("No se han encontrado datos para ese activo.")
+        if df.empty:
+            st.error("No hay datos")
+            st.stop()
 
-    else:
-
-        if isinstance(datos.columns, pd.MultiIndex):
-            datos.columns = datos.columns.get_level_values(0)
-
-        datos["techo"] = datos["High"].rolling(dias_caja).max()
-        datos["suelo"] = datos["Low"].rolling(dias_caja).min()
-        datos["volumen_medio"] = datos["Volume"].rolling(20).mean()
-
-        datos = datos.dropna()
-
-        datos["rompe_darvas"] = (
-            (datos["Close"] > datos["techo"].shift(1)) &
-            (datos["Volume"] > datos["volumen_medio"] * factor_volumen)
+        ruptura, entrada = detectar_darvas(
+            df,
+            dias_caja
         )
 
-        senales = datos[datos["rompe_darvas"]]
+        precio_actual = round(
+            df["Close"].iloc[-1],
+            2
+        )
 
-        st.subheader(f"Resultado para {activo}")
+        stop_loss = round(
+            df["Low"].rolling(dias_caja).min().iloc[-1],
+            2
+        )
 
-        if len(senales) > 0:
+        riesgo = round(
+            precio_actual - stop_loss,
+            2
+        )
 
-            ultima = senales.iloc[-1]
+        st.subheader(f"Resultado para {ticker}")
 
-            entrada = float(ultima["Close"])
-            stop = float(ultima["suelo"])
-            riesgo = entrada - stop
-            objetivo = entrada + riesgo * 2
+        if ruptura:
 
-            mensaje = (
-                f"🚀 RUPTURA DARVAS\n\n"
-                f"Activo: {activo}\n"
-                f"Entrada: {round(entrada, 2)}\n"
-                f"Stop Loss: {round(stop, 2)}\n"
-                f"Riesgo: {round(riesgo, 2)}\n"
-                f"Objetivo 2R: {round(objetivo, 2)}"
-            )
+            st.success("✅ Hay ruptura Darvas")
 
-            ok, respuesta = enviar_alerta(mensaje)
+            mensaje = f"""
+🚀 RUPTURA DARVAS
 
-            if ok:
-                st.success("✅ Hay ruptura Darvas detectada y alerta enviada")
-            else:
-                st.warning("✅ Hay ruptura Darvas, pero falló Telegram")
-                st.error(respuesta)
+Ticker: {ticker}
 
-            col1, col2, col3, col4 = st.columns(4)
+Entrada: {precio_actual}
 
-            col1.metric("Entrada", round(entrada, 2))
-            col2.metric("Stop Loss", round(stop, 2))
-            col3.metric("Riesgo", round(riesgo, 2))
-            col4.metric("Objetivo 2R", round(objetivo, 2))
+Stop Loss: {stop_loss}
 
-            st.dataframe(senales.tail(10))
+Riesgo: {riesgo}
+"""
+
+            enviar_alerta(mensaje)
+
+            st.success("📲 Alerta enviada al móvil")
 
         else:
-            st.warning("❌ No hay ruptura Darvas fuerte")
 
-        fig, ax = plt.subplots(figsize=(14, 6))
+            st.warning("❌ No hay ruptura")
 
-        ax.plot(datos.index, datos["Close"], label="Precio")
-        ax.plot(datos.index, datos["techo"], label="Techo Darvas")
-        ax.plot(datos.index, datos["suelo"], label="Suelo Darvas")
+        st.write(f"### Entrada\n{precio_actual}")
+        st.write(f"### Stop Loss\n{stop_loss}")
+        st.write(f"### Riesgo\n{riesgo}")
 
-        if len(senales) > 0:
-            ax.scatter(
-                senales.index,
-                senales["Close"],
-                marker="^",
-                s=120,
-                label="Ruptura"
-            )
+    except Exception as e:
 
-        ax.legend()
-        ax.grid()
-
-        st.pyplot(fig)
-
-
-
-
-
-
+        st.error(str(e))
