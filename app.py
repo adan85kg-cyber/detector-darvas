@@ -8,35 +8,27 @@ from datetime import datetime
 
 # ---------- CONFIG ----------
 NTFY_TOPIC = "darvas-adan-8519"
-
-WATCHLIST = [
-    "NVDA",
-    "PLTR",
-    "AMD",
-    "TSLA",
-    "META",
-    "MSFT",
-    "AAPL",
-    "GOOGL",
-    "AMZN",
-    "COIN",
-    "MSTR",
-    "SMCI",
-    "SOUN",
-    "ARM",
-    "BTC-USD",
-    "ETH-USD",
-    "XRP-USD"
-]
-
 ARCHIVO_ALERTAS = "alertas_enviadas.json"
 
-# ---------- ALERTAS ----------
+WATCHLIST = [
+    "NVDA", "PLTR", "AMD", "TSLA", "META", "MSFT", "AAPL",
+    "GOOGL", "AMZN", "COIN", "MSTR", "SMCI", "SOUN", "ARM",
+    "BTC-USD", "ETH-USD", "XRP-USD"
+]
+
+# ---------- UTILIDADES ----------
+def numero_seguro(valor):
+    try:
+        if hasattr(valor, "iloc"):
+            if len(valor) > 0:
+                return float(valor.iloc[0])
+        return float(valor)
+    except Exception:
+        return 0.0
+
 def enviar_alerta(mensaje):
-
     url = f"https://ntfy.sh/{NTFY_TOPIC}"
-
-    requests.post(
+    r = requests.post(
         url,
         data=mensaje.encode("utf-8"),
         headers={
@@ -45,60 +37,47 @@ def enviar_alerta(mensaje):
         },
         timeout=10
     )
+    return r.status_code
 
-# ---------- ARCHIVO ALERTAS ----------
 def cargar_alertas():
-
     if not os.path.exists(ARCHIVO_ALERTAS):
         return {}
-
-    with open(ARCHIVO_ALERTAS, "r") as f:
-        return json.load(f)
+    try:
+        with open(ARCHIVO_ALERTAS, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 def guardar_alertas(alertas):
-
     with open(ARCHIVO_ALERTAS, "w") as f:
         json.dump(alertas, f)
 
-# ---------- DARVAS ----------
-def detectar_darvas(df, dias_caja=20):
-
-    maximo = float(
+# ---------- INDICADORES ----------
+def detectar_darvas(df, dias_caja):
+    maximo_caja = numero_seguro(
         df["High"].rolling(dias_caja).max().iloc[-2]
     )
+    cierre_actual = numero_seguro(df["Close"].iloc[-1])
+    return cierre_actual > maximo_caja, maximo_caja, cierre_actual
 
-    cierre_actual = float(
-        df["Close"].iloc[-1]
-    )
+def volumen_fuerte(df, multiplicador):
+    volumen_actual = numero_seguro(df["Volume"].iloc[-1])
+    volumen_medio = numero_seguro(df["Volume"].rolling(20).mean().iloc[-1])
 
-    ruptura = cierre_actual > maximo
+    if volumen_medio <= 0:
+        return False, volumen_actual, volumen_medio
 
-    return ruptura
+    return volumen_actual > volumen_medio * multiplicador, volumen_actual, volumen_medio
 
-# ---------- VOLUMEN ----------
-def volumen_fuerte(df):
-
-    volumen_actual = float(df["Volume"].iloc[-1])
-
-    volumen_medio = float(
-        df["Volume"].rolling(20).mean().iloc[-1]
-    )
-
-    return volumen_actual > volumen_medio * 1.5
-
-# ---------- SCORE ----------
-def calcular_score(df):
-
+def calcular_score(df, volumen_ok):
     score = 0
 
     close = df["Close"]
+    precio = numero_seguro(close.iloc[-1])
+    sma50 = numero_seguro(close.rolling(50).mean().iloc[-1])
+    sma200 = numero_seguro(close.rolling(200).mean().iloc[-1])
+    max_52 = numero_seguro(df["High"].rolling(252).max().iloc[-1])
 
-    sma50 = close.rolling(50).mean().iloc[-1]
-    sma200 = close.rolling(200).mean().iloc[-1]
-
-    precio = close.iloc[-1]
-
-    # Tendencia fuerte
     if precio > sma50:
         score += 2
 
@@ -108,16 +87,12 @@ def calcular_score(df):
     if sma50 > sma200:
         score += 2
 
-    # Cerca de máximos
-    max_52 = df["High"].rolling(252).max().iloc[-1]
+    if max_52 > 0:
+        distancia_maximos = (max_52 - precio) / max_52
+        if distancia_maximos < 0.15:
+            score += 2
 
-    distancia = (max_52 - precio) / max_52
-
-    if distancia < 0.15:
-        score += 2
-
-    # Volumen fuerte
-    if volumen_fuerte(df):
+    if volumen_ok:
         score += 2
 
     return score
@@ -130,89 +105,104 @@ st.set_page_config(
 
 st.title("🚀 Darvas AI Scanner")
 
-dias_caja = st.slider(
-    "Dias caja Darvas",
-    5,
-    50,
-    20
+st.write("Scanner automático con Darvas, tendencia, volumen, score y alertas al móvil.")
+
+dias_caja = st.slider("Días caja Darvas", 5, 50, 20)
+
+score_minimo = st.slider("Score mínimo para alerta", 1, 10, 6)
+
+multiplicador_volumen = st.slider(
+    "Volumen mínimo x media",
+    1.0,
+    5.0,
+    1.5,
+    0.1
 )
 
-score_minimo = st.slider(
-    "Score minimo",
-    1,
-    10,
-    6
+tickers_texto = st.text_area(
+    "Tickers a escanear",
+    ", ".join(WATCHLIST)
 )
 
-resultados = []
+tickers = [
+    t.strip().upper()
+    for t in tickers_texto.split(",")
+    if t.strip()
+]
 
 if st.button("🔍 Escanear mercado"):
 
     alertas_enviadas = cargar_alertas()
+    resultados = []
 
-    for ticker in WATCHLIST:
+    with st.spinner("Escaneando mercado..."):
 
-        try:
+        for ticker in tickers:
 
-            df = yf.download(
-                ticker,
-                period="1y",
-                interval="1d",
-                progress=False
-            )
+            try:
+                df = yf.download(
+                    ticker,
+                    period="1y",
+                    interval="1d",
+                    auto_adjust=False,
+                    progress=False
+                )
 
-            if df.empty:
-                continue
+                if df.empty or len(df) < 220:
+                    resultados.append({
+                        "Ticker": ticker,
+                        "Precio": "-",
+                        "Score": 0,
+                        "Ruptura": False,
+                        "Volumen": False,
+                        "Riesgo": "-",
+                        "Estado": "Sin datos suficientes"
+                    })
+                    continue
 
-            ruptura = detectar_darvas(
-                df,
-                dias_caja
-            )
+                ruptura, entrada_darvas, precio_actual = detectar_darvas(
+                    df,
+                    dias_caja
+                )
 
-            score = calcular_score(df)
+                volumen_ok, volumen_actual, volumen_medio = volumen_fuerte(
+                    df,
+                    multiplicador_volumen
+                )
 
-            volumen_ok = volumen_fuerte(df)
+                score = calcular_score(df, volumen_ok)
 
-            precio_actual = round(
-                float(df["Close"].iloc[-1]),
-                2
-            )
+                precio_actual = round(precio_actual, 2)
 
-            stop_loss = round(
-                float(
-                    df["Low"]
-                    .rolling(dias_caja)
-                    .min()
-                    .iloc[-1]
-                ),
-                2
-            )
+                stop_loss = round(
+                    numero_seguro(
+                        df["Low"].rolling(dias_caja).min().iloc[-1]
+                    ),
+                    2
+                )
 
-            riesgo = round(
-                precio_actual - stop_loss,
-                2
-            )
+                riesgo = round(precio_actual - stop_loss, 2)
 
-            resultados.append({
-                "Ticker": ticker,
-                "Precio": precio_actual,
-                "Score": score,
-                "Ruptura": ruptura,
-                "Volumen": volumen_ok,
-                "Riesgo": riesgo
-            })
+                estado = "OK"
 
-            clave_alerta = f"{ticker}_{datetime.now().date()}"
+                resultados.append({
+                    "Ticker": ticker,
+                    "Precio": precio_actual,
+                    "Score": score,
+                    "Ruptura": ruptura,
+                    "Volumen": volumen_ok,
+                    "Stop Loss": stop_loss,
+                    "Riesgo": riesgo,
+                    "Estado": estado
+                })
 
-            if (
-                ruptura
-                and volumen_ok
-                and score >= score_minimo
-            ):
+                clave_alerta = f"{ticker}_{datetime.now().date()}"
 
-                if clave_alerta not in alertas_enviadas:
+                if ruptura and volumen_ok and score >= score_minimo:
 
-                    mensaje = f"""
+                    if clave_alerta not in alertas_enviadas:
+
+                        mensaje = f"""
 🚀 DARVAS BREAKOUT
 
 Ticker: {ticker}
@@ -226,25 +216,38 @@ Stop Loss: {stop_loss}
 Riesgo: {riesgo}
 """
 
-                    enviar_alerta(mensaje)
+                        codigo = enviar_alerta(mensaje)
 
-                    alertas_enviadas[clave_alerta] = True
+                        if codigo == 200:
+                            alertas_enviadas[clave_alerta] = True
 
-        except Exception as e:
-
-            st.error(f"{ticker}: {e}")
+            except Exception as e:
+                resultados.append({
+                    "Ticker": ticker,
+                    "Precio": "-",
+                    "Score": 0,
+                    "Ruptura": False,
+                    "Volumen": False,
+                    "Riesgo": "-",
+                    "Estado": f"Error: {e}"
+                })
 
     guardar_alertas(alertas_enviadas)
 
     if resultados:
-
         df_resultados = pd.DataFrame(resultados)
-
         df_resultados = df_resultados.sort_values(
             by="Score",
             ascending=False
         )
 
-        st.dataframe(df_resultados)
+        st.subheader("Resultados")
+        st.dataframe(df_resultados, use_container_width=True)
 
-        st.success("✅ Escaneo completado")
+        buenas = df_resultados[
+            (df_resultados["Ruptura"] == True) &
+            (df_resultados["Volumen"] == True) &
+            (df_resultados["Score"] >= score_minimo)
+        ]
+
+        st.success(f"✅ Escaneo completado. Señales buenas: {len(buenas)}")
