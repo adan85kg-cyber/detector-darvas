@@ -1,14 +1,11 @@
-import streamlit as st
+        import streamlit as st
 import yfinance as yf
 import requests
 
-# ---------- CONFIG ----------
 NTFY_TOPIC = "darvas-adan-8519"
 
-# ---------- ALERTA NTFY ----------
 def enviar_alerta(mensaje):
     url = f"https://ntfy.sh/{NTFY_TOPIC}"
-
     respuesta = requests.post(
         url,
         data=mensaje.encode("utf-8"),
@@ -18,21 +15,25 @@ def enviar_alerta(mensaje):
         },
         timeout=10
     )
-
     return respuesta.status_code
 
+def valor_numero(x):
+    try:
+        return float(x.iloc[0])
+    except:
+        return float(x)
 
-# ---------- DARVAS ----------
 def detectar_darvas(df, dias_caja=20):
-    maximo = float(df["High"].rolling(dias_caja).max().iloc[-2])
-    cierre_actual = float(df["Close"].iloc[-1])
+    high = df["High"]
+    close = df["Close"]
+
+    maximo = valor_numero(high.rolling(dias_caja).max().iloc[-2])
+    cierre_actual = valor_numero(close.iloc[-1])
 
     ruptura = cierre_actual > maximo
 
     return ruptura, maximo, cierre_actual
 
-
-# ---------- APP ----------
 st.set_page_config(page_title="Detector Darvas", page_icon="🚀")
 
 st.title("🚀 Detector Darvas")
@@ -47,7 +48,6 @@ dias_caja = st.slider(
 )
 
 if st.button("Analizar"):
-
     try:
         df = yf.download(
             ticker,
@@ -61,17 +61,12 @@ if st.button("Analizar"):
             st.error("No hay datos para ese ticker")
             st.stop()
 
-        ruptura, entrada_darvas, precio_actual = detectar_darvas(
-            df,
-            dias_caja
-        )
+        ruptura, entrada_darvas, precio_actual = detectar_darvas(df, dias_caja)
 
-        precio_actual = round(float(precio_actual), 2)
+        precio_actual = round(precio_actual, 2)
 
-        stop_loss = round(
-            float(df["Low"].rolling(dias_caja).min().iloc[-1]),
-            2
-        )
+        minimo = df["Low"].rolling(dias_caja).min().iloc[-1]
+        stop_loss = round(valor_numero(minimo), 2)
 
         riesgo = round(precio_actual - stop_loss, 2)
 
@@ -84,11 +79,8 @@ if st.button("Analizar"):
 🚀 RUPTURA DARVAS
 
 Ticker: {ticker}
-
 Entrada: {precio_actual}
-
 Stop Loss: {stop_loss}
-
 Riesgo: {riesgo}
 """
 
@@ -98,7 +90,6 @@ Riesgo: {riesgo}
                 st.success("📲 Alerta enviada al móvil")
             else:
                 st.error(f"Falló ntfy. Código: {estado}")
-
         else:
             st.warning("❌ No hay ruptura Darvas")
 
