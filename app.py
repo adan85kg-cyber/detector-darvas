@@ -10,6 +10,7 @@ from streamlit_autorefresh import st_autorefresh
 NTFY_TOPIC = "darvas-adan-8519"
 ARCHIVO_ALERTAS = "alertas_enviadas.json"
 ARCHIVO_HISTORICO = "historico_senales.csv"
+ARCHIVO_CANDIDATOS = "historico_candidatos.csv"
 
 WATCHLIST = [
     "NVDA", "PLTR", "AMD", "TSLA", "META", "MSFT", "AAPL",
@@ -53,16 +54,16 @@ def guardar_alertas(alertas):
     with open(ARCHIVO_ALERTAS, "w") as f:
         json.dump(alertas, f)
 
-def guardar_senal(datos):
+def guardar_csv(archivo, datos):
     df_nueva = pd.DataFrame([datos])
 
-    if os.path.exists(ARCHIVO_HISTORICO):
-        df_antiguo = pd.read_csv(ARCHIVO_HISTORICO)
+    if os.path.exists(archivo):
+        df_antiguo = pd.read_csv(archivo)
         df_total = pd.concat([df_antiguo, df_nueva], ignore_index=True)
     else:
         df_total = df_nueva
 
-    df_total.to_csv(ARCHIVO_HISTORICO, index=False)
+    df_total.to_csv(archivo, index=False)
 
 def detectar_darvas(df, dias_caja):
     maximo_caja = numero_seguro(df["High"].rolling(dias_caja).max().iloc[-2])
@@ -72,8 +73,10 @@ def detectar_darvas(df, dias_caja):
 def volumen_fuerte(df, multiplicador):
     volumen_actual = numero_seguro(df["Volume"].iloc[-1])
     volumen_medio = numero_seguro(df["Volume"].rolling(20).mean().iloc[-1])
+
     if volumen_medio <= 0:
         return False, 0
+
     volumen_relativo = volumen_actual / volumen_medio
     return volumen_relativo >= multiplicador, round(volumen_relativo, 2)
 
@@ -123,6 +126,25 @@ def calcular_score(df, volumen_ok, riesgo_pct, distancia_maximos):
 
     return min(score, 10)
 
+def clasificar_setup(ruptura, volumen_ok, score, riesgo_pct, riesgo_maximo, distancia_maximos, score_minimo):
+    if (
+        ruptura and
+        volumen_ok and
+        score >= score_minimo and
+        riesgo_pct <= riesgo_maximo and
+        distancia_maximos <= 20
+    ):
+        return "🟢 Señal buena"
+
+    if (
+        score >= 8 and
+        distancia_maximos <= 20 and
+        riesgo_pct <= riesgo_maximo * 1.5
+    ):
+        return "🟡 Candidato fuerte"
+
+    return "🔴 Débil"
+
 def escanear_mercado(tickers, dias_caja, score_minimo, multiplicador_volumen, riesgo_maximo):
     alertas_enviadas = cargar_alertas()
     resultados = []
@@ -142,11 +164,7 @@ def escanear_mercado(tickers, dias_caja, score_minimo, multiplicador_volumen, ri
                     "Ticker": ticker,
                     "Precio": "-",
                     "Score": 0,
-                    "Ruptura": False,
-                    "Volumen x": "-",
-                    "Riesgo %": "-",
-                    "Máximos %": "-",
-                    "Señal buena": False,
+                    "Setup": "Sin datos",
                     "Estado": "Sin datos suficientes"
                 })
                 continue
@@ -162,11 +180,9 @@ def escanear_mercado(tickers, dias_caja, score_minimo, multiplicador_volumen, ri
             )
 
             riesgo = round(precio_actual - stop_loss, 2)
-
             riesgo_pct = round((riesgo / precio_actual) * 100, 2) if precio_actual > 0 else 999
 
             max_52 = numero_seguro(df["High"].rolling(252).max().iloc[-1])
-
             distancia_maximos = round(((max_52 - precio_actual) / max_52) * 100, 2) if max_52 > 0 else 999
 
             atr = round(calcular_atr(df), 2)
@@ -178,18 +194,21 @@ def escanear_mercado(tickers, dias_caja, score_minimo, multiplicador_volumen, ri
                 distancia_maximos
             )
 
-            calidad = (
-                ruptura and
-                volumen_ok and
-                score >= score_minimo and
-                riesgo_pct <= riesgo_maximo and
-                distancia_maximos <= 20
+            setup = clasificar_setup(
+                ruptura,
+                volumen_ok,
+                score,
+                riesgo_pct,
+                riesgo_maximo,
+                distancia_maximos,
+                score_minimo
             )
 
             fila = {
                 "Ticker": ticker,
                 "Precio": precio_actual,
                 "Score": score,
+                "Setup": setup,
                 "Ruptura": ruptura,
                 "Volumen x": volumen_relativo,
                 "Stop Loss": stop_loss,
@@ -197,7 +216,6 @@ def escanear_mercado(tickers, dias_caja, score_minimo, multiplicador_volumen, ri
                 "Riesgo %": riesgo_pct,
                 "ATR": atr,
                 "Máximos %": distancia_maximos,
-                "Señal buena": calidad,
                 "Estado": "OK"
             }
 
@@ -205,7 +223,22 @@ def escanear_mercado(tickers, dias_caja, score_minimo, multiplicador_volumen, ri
 
             clave_alerta = f"{ticker}_{datetime.now().date()}"
 
-            if calidad and clave_alerta not in alertas_enviadas:
+            datos_historial = {
+                "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "Ticker": ticker,
+                "Precio": precio_actual,
+                "Score": score,
+                "Setup": setup,
+                "Ruptura": ruptura,
+                "Volumen x": volumen_relativo,
+                "Stop Loss": stop_loss,
+                "Riesgo": riesgo,
+                "Riesgo %": riesgo_pct,
+                "Máximos %": distancia_maximos,
+                "ATR": atr
+            }
+
+            if setup == "🟢 Señal buena" and clave_alerta not in alertas_enviadas:
                 mensaje = f"""
 🚀 DARVAS GROWTH BREAKOUT
 
@@ -227,30 +260,20 @@ ATR: {atr}
 
                 if codigo == 200:
                     alertas_enviadas[clave_alerta] = True
+                    guardar_csv(ARCHIVO_HISTORICO, datos_historial)
 
-                    guardar_senal({
-                        "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Ticker": ticker,
-                        "Precio": precio_actual,
-                        "Score": score,
-                        "Stop Loss": stop_loss,
-                        "Riesgo": riesgo,
-                        "Riesgo %": riesgo_pct,
-                        "Volumen x": volumen_relativo,
-                        "Máximos %": distancia_maximos,
-                        "ATR": atr
-                    })
+            if setup == "🟡 Candidato fuerte":
+                clave_candidato = f"{ticker}_{datetime.now().date()}_candidato"
+                if clave_candidato not in alertas_enviadas:
+                    guardar_csv(ARCHIVO_CANDIDATOS, datos_historial)
+                    alertas_enviadas[clave_candidato] = True
 
         except Exception as e:
             resultados.append({
                 "Ticker": ticker,
                 "Precio": "-",
                 "Score": 0,
-                "Ruptura": False,
-                "Volumen x": "-",
-                "Riesgo %": "-",
-                "Máximos %": "-",
-                "Señal buena": False,
+                "Setup": "Error",
                 "Estado": f"Error: {e}"
             })
 
@@ -264,7 +287,7 @@ st.set_page_config(
 
 st.title("🚀 Darvas Growth Scanner")
 
-st.write("Scanner automático con Darvas, tendencia, volumen, riesgo, ATR, máximos, histórico y alertas al móvil.")
+st.write("Radar automático de señales Darvas, candidatos fuertes, riesgo, volumen, máximos y alertas móviles.")
 
 modo_auto = st.toggle("Autoescaneo activado", value=True)
 
@@ -326,22 +349,44 @@ if ejecutar:
     if resultados:
         df_resultados = pd.DataFrame(resultados)
 
+        orden_setup = {
+            "🟢 Señal buena": 3,
+            "🟡 Candidato fuerte": 2,
+            "🔴 Débil": 1,
+            "Sin datos": 0,
+            "Error": 0
+        }
+
+        df_resultados["Orden"] = df_resultados["Setup"].map(orden_setup).fillna(0)
+
         df_resultados = df_resultados.sort_values(
-            by=["Señal buena", "Score"],
+            by=["Orden", "Score"],
             ascending=False
         )
 
-        st.subheader("Resultados")
+        df_resultados = df_resultados.drop(columns=["Orden"])
+
+        st.subheader("📊 Resultados")
         st.dataframe(df_resultados, use_container_width=True)
 
-        buenas = df_resultados[df_resultados["Señal buena"] == True]
+        senales = df_resultados[df_resultados["Setup"] == "🟢 Señal buena"]
+        candidatos = df_resultados[df_resultados["Setup"] == "🟡 Candidato fuerte"]
 
-        st.success(f"✅ Escaneo completado. Señales buenas: {len(buenas)}")
+        st.success(f"✅ Señales buenas: {len(senales)}")
+        st.warning(f"🟡 Candidatos fuertes: {len(candidatos)}")
 
-st.subheader("📒 Histórico de señales")
+st.subheader("🟢 Histórico de señales buenas")
 
 if os.path.exists(ARCHIVO_HISTORICO):
     historico = pd.read_csv(ARCHIVO_HISTORICO)
     st.dataframe(historico.sort_values(by="Fecha", ascending=False), use_container_width=True)
 else:
-    st.info("Todavía no hay señales guardadas.")
+    st.info("Todavía no hay señales buenas guardadas.")
+
+st.subheader("🟡 Histórico de candidatos fuertes")
+
+if os.path.exists(ARCHIVO_CANDIDATOS):
+    candidatos_hist = pd.read_csv(ARCHIVO_CANDIDATOS)
+    st.dataframe(candidatos_hist.sort_values(by="Fecha", ascending=False), use_container_width=True)
+else:
+    st.info("Todavía no hay candidatos fuertes guardados.")
