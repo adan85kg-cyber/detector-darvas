@@ -9,6 +9,7 @@ from streamlit_autorefresh import st_autorefresh
 
 NTFY_TOPIC = "darvas-adan-8519"
 ARCHIVO_ALERTAS = "alertas_enviadas.json"
+ARCHIVO_HISTORICO = "historico_senales.csv"
 
 WATCHLIST = [
     "NVDA", "PLTR", "AMD", "TSLA", "META", "MSFT", "AAPL",
@@ -52,6 +53,17 @@ def guardar_alertas(alertas):
     with open(ARCHIVO_ALERTAS, "w") as f:
         json.dump(alertas, f)
 
+def guardar_senal(datos):
+    df_nueva = pd.DataFrame([datos])
+
+    if os.path.exists(ARCHIVO_HISTORICO):
+        df_antiguo = pd.read_csv(ARCHIVO_HISTORICO)
+        df_total = pd.concat([df_antiguo, df_nueva], ignore_index=True)
+    else:
+        df_total = df_nueva
+
+    df_total.to_csv(ARCHIVO_HISTORICO, index=False)
+
 def detectar_darvas(df, dias_caja):
     maximo_caja = numero_seguro(df["High"].rolling(dias_caja).max().iloc[-2])
     cierre_actual = numero_seguro(df["Close"].iloc[-1])
@@ -90,31 +102,22 @@ def calcular_score(df, volumen_ok, riesgo_pct, distancia_maximos):
 
     if precio > sma20:
         score += 1
-
     if precio > sma50:
         score += 2
-
     if precio > sma200:
         score += 2
-
     if sma20 > sma50:
         score += 1
-
     if sma50 > sma200:
         score += 2
-
     if distancia_maximos <= 15:
         score += 1
-
     if distancia_maximos <= 8:
         score += 1
-
     if volumen_ok:
         score += 2
-
     if riesgo_pct <= 8:
         score += 1
-
     if riesgo_pct <= 5:
         score += 1
 
@@ -143,12 +146,12 @@ def escanear_mercado(tickers, dias_caja, score_minimo, multiplicador_volumen, ri
                     "Volumen x": "-",
                     "Riesgo %": "-",
                     "Máximos %": "-",
+                    "Señal buena": False,
                     "Estado": "Sin datos suficientes"
                 })
                 continue
 
             ruptura, entrada_darvas, precio_actual = detectar_darvas(df, dias_caja)
-
             volumen_ok, volumen_relativo = volumen_fuerte(df, multiplicador_volumen)
 
             precio_actual = round(precio_actual, 2)
@@ -160,17 +163,11 @@ def escanear_mercado(tickers, dias_caja, score_minimo, multiplicador_volumen, ri
 
             riesgo = round(precio_actual - stop_loss, 2)
 
-            if precio_actual > 0:
-                riesgo_pct = round((riesgo / precio_actual) * 100, 2)
-            else:
-                riesgo_pct = 999
+            riesgo_pct = round((riesgo / precio_actual) * 100, 2) if precio_actual > 0 else 999
 
             max_52 = numero_seguro(df["High"].rolling(252).max().iloc[-1])
 
-            if max_52 > 0:
-                distancia_maximos = round(((max_52 - precio_actual) / max_52) * 100, 2)
-            else:
-                distancia_maximos = 999
+            distancia_maximos = round(((max_52 - precio_actual) / max_52) * 100, 2) if max_52 > 0 else 999
 
             atr = round(calcular_atr(df), 2)
 
@@ -189,7 +186,7 @@ def escanear_mercado(tickers, dias_caja, score_minimo, multiplicador_volumen, ri
                 distancia_maximos <= 20
             )
 
-            resultados.append({
+            fila = {
                 "Ticker": ticker,
                 "Precio": precio_actual,
                 "Score": score,
@@ -202,7 +199,9 @@ def escanear_mercado(tickers, dias_caja, score_minimo, multiplicador_volumen, ri
                 "Máximos %": distancia_maximos,
                 "Señal buena": calidad,
                 "Estado": "OK"
-            })
+            }
+
+            resultados.append(fila)
 
             clave_alerta = f"{ticker}_{datetime.now().date()}"
 
@@ -223,10 +222,24 @@ Volumen x media: {volumen_relativo}
 Distancia máximos 52s: {distancia_maximos}%
 ATR: {atr}
 """
+
                 codigo = enviar_alerta(mensaje)
 
                 if codigo == 200:
                     alertas_enviadas[clave_alerta] = True
+
+                    guardar_senal({
+                        "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Ticker": ticker,
+                        "Precio": precio_actual,
+                        "Score": score,
+                        "Stop Loss": stop_loss,
+                        "Riesgo": riesgo,
+                        "Riesgo %": riesgo_pct,
+                        "Volumen x": volumen_relativo,
+                        "Máximos %": distancia_maximos,
+                        "ATR": atr
+                    })
 
         except Exception as e:
             resultados.append({
@@ -237,6 +250,7 @@ ATR: {atr}
                 "Volumen x": "-",
                 "Riesgo %": "-",
                 "Máximos %": "-",
+                "Señal buena": False,
                 "Estado": f"Error: {e}"
             })
 
@@ -250,7 +264,7 @@ st.set_page_config(
 
 st.title("🚀 Darvas Growth Scanner")
 
-st.write("Scanner automático con Darvas, tendencia, volumen, riesgo, ATR, máximos y alertas al móvil.")
+st.write("Scanner automático con Darvas, tendencia, volumen, riesgo, ATR, máximos, histórico y alertas al móvil.")
 
 modo_auto = st.toggle("Autoescaneo activado", value=True)
 
@@ -323,3 +337,11 @@ if ejecutar:
         buenas = df_resultados[df_resultados["Señal buena"] == True]
 
         st.success(f"✅ Escaneo completado. Señales buenas: {len(buenas)}")
+
+st.subheader("📒 Histórico de señales")
+
+if os.path.exists(ARCHIVO_HISTORICO):
+    historico = pd.read_csv(ARCHIVO_HISTORICO)
+    st.dataframe(historico.sort_values(by="Fecha", ascending=False), use_container_width=True)
+else:
+    st.info("Todavía no hay señales guardadas.")
